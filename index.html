@@ -1,1 +1,111 @@
 
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تتبع التاكسي</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; }
+        .request-btn { background-color: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 5px; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script>
+        const tg = window.Telegram ? window.Telegram.WebApp : null;
+        if (tg) { tg.ready(); tg.expand(); }
+
+        const map = L.map('map').setView([35.7437, 43.2758], 13);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+        const userIcon = L.divIcon({
+            className: 'user-marker',
+            html: '<div style="background-color: #007bff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 8px rgba(0,0,255,0.6);"></div>',
+            iconSize: [20, 20], iconAnchor: [10, 10]
+        });
+
+        let userLat = null; let userLng = null;
+        map.locate({setView: true, maxZoom: 15, enableHighAccuracy: true});
+        map.on('locationfound', (e) => {
+            userLat = e.latlng.lat; userLng = e.latlng.lng;
+            L.marker(e.latlng, { icon: userIcon }).addTo(map).bindPopup("موقعك الحالي").openPopup();
+        });
+
+        let driverMarkers = {};
+
+        async function fetchDrivers() {
+            try {
+                // استبدل Jalal1 باسي حسابك الدقيق في pythonanywhere إذا كان مختلفاً (مثلاً jalal1)
+                const response = await fetch('https://Jalal1.pythonanywhere.com/get_drivers?t=' + new Date().getTime());
+                if (!response.ok) return;
+                const drivers = await response.json();
+
+                drivers.forEach(driver => {
+                    const driverId = driver.id;
+                    const name = driver.name || 'تاكسي';
+                    const lat = parseFloat(driver.lat);
+                    const lng = parseFloat(driver.lng);
+
+                    if (lat && lng) {
+                        const popupContent = `
+                            <div>
+                                <b>السائق: ${name}</b><br>
+                                <button class="request-btn" onclick="requestTaxi('${driverId}', '${name}')">طلب التاكسي</button>
+                            </div>
+                        `;
+
+                        if (driverMarkers[driverId]) {
+                            // تحديث الموقع والإحداثيات للماركر القائم
+                            driverMarkers[driverId].setLatLng([lat, lng]);
+                        } else {
+                            // إنشاء الماركر وتخزينه
+                            driverMarkers[driverId] = L.marker([lat, lng]).addTo(map).bindPopup(popupContent);
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error("خطأ في جلب البيانات:", err);
+            }
+        }
+
+        function sendPayload(driverId, driverName, lat, lng) {
+            const payload = {
+                action: 'request_taxi',
+                driver_id: driverId,
+                driver_name: driverName,
+                lat: lat,
+                lng: lng
+            };
+            if (tg) {
+                tg.sendData(JSON.stringify(payload));
+                tg.close();
+            }
+        }
+
+        function requestTaxi(driverId, driverName) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        sendPayload(driverId, driverName, position.coords.latitude, position.coords.longitude);
+                    },
+                    (error) => {
+                        sendPayload(driverId, driverName, userLat, userLng);
+                    },
+                    { enableHighAccuracy: true, timeout: 5000 }
+                );
+            } else {
+                sendPayload(driverId, driverName, userLat, userLng);
+            }
+        }
+
+        // تشغيل مباشر وتحديث كل 2 ثوانٍ
+        fetchDrivers();
+        setInterval(fetchDrivers, 2000);
+    </script>
+</body>
+</html>
